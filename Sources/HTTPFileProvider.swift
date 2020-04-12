@@ -343,14 +343,24 @@ open class HTTPFileProvider: NSObject, FileProviderBasicRemote, FileProviderOper
     
     @discardableResult
     open func writeContents(path: String, contents data: Data?, atomically: Bool, overwrite: Bool, completionHandler: SimpleCompletionHandler) -> Progress? {
+        print("writeContents()")
         let operation = FileOperationType.modify(path: path)
+        print("operation: \(operation)")
         guard fileOperationDelegate?.fileProvider(self, shouldDoOperation: operation) ?? true == true else {
+            
             return nil
         }
         let data = data ?? Data()
+        print("data size: \(data.count)")
         let request = self.request(for: operation, overwrite: overwrite, attributes: [.contentModificationDateKey: Date()])
-        let stream = InputStream(data: data)
-        return upload(path, request: request, stream: stream, size: Int64(data.count), operation: operation, completionHandler: completionHandler)
+        print("request: \(request)")
+        
+        //let stream = InputStream(data: data)
+        
+        
+        return upload(path, request: request, data: data, size: Int64(data.count), operation: operation, completionHandler: completionHandler)
+        
+//        return upload(path, request: request, stream: stream, size: Int64(data.count), operation: operation, completionHandler: completionHandler)
     }
     
     internal func request(for operation: FileOperationType, overwrite: Bool = false, attributes: [URLResourceKey: Any] = [:]) -> URLRequest {
@@ -502,7 +512,7 @@ open class HTTPFileProvider: NSObject, FileProviderBasicRemote, FileProviderOper
     
     func upload_task(_ targetPath: String, progress: Progress, task: URLSessionTask, operation: FileOperationType,
                      completionHandler: SimpleCompletionHandler) -> Void {
-        
+        print("upload_task()")
         var allData = Data()
         dataCompletionHandlersForTasks[session.sessionDescription!]?[task.taskIdentifier] = { data in
             allData.append(data)
@@ -519,17 +529,26 @@ open class HTTPFileProvider: NSObject, FileProviderBasicRemote, FileProviderOper
             completionHandler?(responseError ?? error)
             self?.delegateNotify(operation, error: responseError ?? error)
         }
+        //print(operation.json)
         task.taskDescription = operation.json
         sessionDelegate?.observerProgress(of: task, using: progress, kind: .upload)
         progress.cancellationHandler = { [weak task] in
+            print("task.cancel()")
             task?.cancel()
         }
+        print("progress object")
+        print(progress.userInfo)
+        print(progress.completedUnitCount)
         progress.setUserInfoObject(Date(), forKey: .startingTimeKey)
+        print("task")
+        print("sent: \(task.countOfBytesSent)")
+        print("to send: \(task.countOfBytesExpectedToSend)")
         task.resume()
     }
     
-    func upload(_ targetPath: String, request: URLRequest, stream: InputStream, size: Int64, operation: FileOperationType,
+    func upload(_ targetPath: String, request: URLRequest, data: Data, size: Int64, operation: FileOperationType,
                      completionHandler: SimpleCompletionHandler) -> Progress? {
+        print("upload()")
         if size > maxUploadSimpleSupported {
             let error = self.serverError(with: .payloadTooLarge, path: targetPath, data: nil)
             completionHandler?(error)
@@ -542,11 +561,52 @@ open class HTTPFileProvider: NSObject, FileProviderBasicRemote, FileProviderOper
         progress.kind = .file
         progress.setUserInfoObject(Progress.FileOperationKind.downloading, forKey: .fileOperationKindKey)
         
+        print("request url: \(request.url)" )
+        
+        var request = request
+        //request.httpBodyStream = stream
+        
+        
+        print("request url: \(request.url)" )
+        
+               
+        let task = session.uploadTask(with: request, from: data)
+        
+        //let task = session.uploadTask(withStreamedRequest: request)
+        print("task defined: now uploading")
+        self.upload_task(targetPath, progress: progress, task: task, operation: operation, completionHandler: completionHandler)
+        print("returning progress")
+        return progress
+    }
+    
+    func upload(_ targetPath: String, request: URLRequest, stream: InputStream, size: Int64, operation: FileOperationType,
+                     completionHandler: SimpleCompletionHandler) -> Progress? {
+        print("upload()")
+        if size > maxUploadSimpleSupported {
+            let error = self.serverError(with: .payloadTooLarge, path: targetPath, data: nil)
+            completionHandler?(error)
+            self.delegateNotify(operation, error: error)
+            return nil
+        }
+        
+        let progress = Progress(totalUnitCount: size)
+        progress.setUserInfoObject(operation, forKey: .fileProvderOperationTypeKey)
+        progress.kind = .file
+        progress.setUserInfoObject(Progress.FileOperationKind.downloading, forKey: .fileOperationKindKey)
+        
+        print("request url: \(request.url)" )
+        
         var request = request
         request.httpBodyStream = stream
-        let task = session.uploadTask(withStreamedRequest: request)
-        self.upload_task(targetPath, progress: progress, task: task, operation: operation, completionHandler: completionHandler)
         
+        print("request url: \(request.url)" )
+        
+        //let task = session.uploadTask(with: <#T##URLRequest#>, from: <#T##Data#>)
+        
+        let task = session.uploadTask(withStreamedRequest: request)
+        print("task defined: now uploading")
+        self.upload_task(targetPath, progress: progress, task: task, operation: operation, completionHandler: completionHandler)
+        print("returning progress")
         return progress
     }
     
